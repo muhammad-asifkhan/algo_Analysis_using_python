@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlgoScope — CPU-Pinned Complexity Profiler</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #080c10;
+    --surface:   #0e1419;
+    --surface2:  #151c24;
+    --border:    #1e2a36;
+    --text:      #cdd6e0;
+    --muted:     #5a7080;
+    --accent:    #00e5ff;
+    --accent2:   #7c3aed;
+    --glow:      rgba(0,229,255,0.15);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── GRID NOISE TEXTURE ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrapper { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 0 2rem 4rem; }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 3rem 0 2rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .logo-block { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .logo-tag {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: #fff;
+  }
+
+  h1 span {
+    color: var(--accent);
+    text-shadow: 0 0 40px var(--glow);
+  }
+
+  .meta-pills { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+
+  .pill {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .pill.active { border-color: var(--accent); color: var(--accent); background: rgba(0,229,255,0.06); }
+
+  /* ── SECTION HEADINGS ── */
+  .section-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+  }
+
+  section { margin-bottom: 3.5rem; }
+
+  /* ── STATS ROW ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 2.5rem;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    padding: 1.4rem 1.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    transition: background 0.2s;
+  }
+  .stat-card:hover { background: var(--surface2); }
+
+  .stat-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .stat-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.02em;
+  }
+
+  .stat-sub {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+  }
+
+  /* ── CHART PANELS ── */
+  .chart-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.8rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .chart-panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2), transparent);
+  }
+
+  .chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .chart-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.01em;
+  }
+
+  .chart-desc {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 0.25rem;
+    max-width: 420px;
+    line-height: 1.6;
+  }
+
+  .chart-toggle-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .toggle-btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.05em;
+  }
+  .toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .toggle-btn.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+
+  .chart-container { position: relative; }
+
+  /* ── TWO-COL GRID ── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* ── ALGO TABLE ── */
+  .algo-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+  }
+
+  .algo-table th {
+    text-align: left;
+    padding: 0.8rem 1rem;
+    color: var(--muted);
+    font-size: 0.62rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .algo-table td {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    color: var(--text);
+  }
+
+  .algo-table tr:last-child td { border-bottom: none; }
+  .algo-table tr:hover td { background: var(--surface2); }
+
+  .color-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 6px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .bar-wrap { width: 120px; height: 6px; background: var(--border); border-radius: 3px; display: inline-block; vertical-align: middle; }
+  .bar-fill  { height: 100%; border-radius: 3px; }
+
+  /* ── FOOTER ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  footer p { font-family: 'Space Mono', monospace; font-size: 0.65rem; color: var(--muted); }
+  footer a { color: var(--accent); text-decoration: none; }
+
+  /* ── FADE-IN ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .chart-panel, .stats-row {
+    animation: fadeUp 0.5s ease both;
+  }
+
+  /* ── Simple explainer + CPU dedication ── */
+  .intro-panel, .cpu-dedicate {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.75rem 2rem;
+    margin-bottom: 2rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .intro-panel::before, .cpu-dedicate::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent2), var(--accent), transparent);
+  }
+
+  .intro-panel h2, .cpu-dedicate h2 {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 1rem;
+    letter-spacing: -0.02em;
+  }
+
+  .step-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    counter-reset: step;
+  }
+  .step-list li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.85rem 1rem;
+    align-items: start;
+    font-size: 0.92rem;
+    line-height: 1.55;
+    color: var(--text);
+  }
+  .step-list li::before {
+    counter-increment: step;
+    content: counter(step);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent);
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,229,255,0.06);
+  }
+  .step-list strong { color: #e6edf3; font-weight: 600; }
+
+  .cpu-dedicate-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    gap: 2rem;
+    align-items: start;
+  }
+  @media (max-width: 960px) { .cpu-dedicate-grid { grid-template-columns: 1fr; } }
+
+  .cpu-copy p {
+    font-size: 0.9rem;
+    line-height: 1.65;
+    color: var(--text);
+    margin-bottom: 1rem;
+  }
+  .cpu-copy p:last-child { margin-bottom: 0; }
+  .cpu-copy .highlight {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .core-grid-wrap {
+    font-family: 'Space Mono', monospace;
+  }
+  .core-grid-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.75rem;
+  }
+  .core-grid {
+    display: grid;
+    gap: 0.65rem;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  }
+  .core-cell {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    background: var(--surface2);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .core-cell .idx {
+    font-size: 0.65rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .core-cell .num {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #fff;
+    margin-top: 0.2rem;
+  }
+  .core-cell.dedicated {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(0,229,255,0.35), 0 0 24px var(--glow);
+    background: linear-gradient(145deg, rgba(0,229,255,0.12), var(--surface2));
+  }
+  .core-cell.dedicated .badge-ded {
+    display: inline-block;
+    margin-top: 0.45rem;
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #000;
+    background: var(--accent);
+    padding: 0.2rem 0.45rem;
+    border-radius: 4px;
+  }
+  .core-cell.other { opacity: 0.55; }
+  .pinned-logical {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    border: 1px dashed var(--border);
+    font-size: 0.72rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .pinned-logical code {
+    color: var(--accent);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.85em;
+  }
+
+  .load-error {
+    background: #2d1f1f;
+    border: 1px solid #5c2a2a;
+    color: #f0b4b4;
+    padding: 1.25rem 1.5rem;
+    border-radius: 12px;
+    margin-bottom: 2rem;
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+  .load-error code { color: #7ee787; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo-block">
+      <span class="logo-tag">// CPU-Pinned Profiler</span>
+      <h1>Algo<span>Scope</span></h1>
+    </div>
+    <div class="meta-pills" id="header-pills">
+      <span class="pill active" id="pill-core">CPU …</span>
+      <span class="pill" id="pill-trials">… trials</span>
+      <span class="pill" id="pill-algos">… algorithms</span>
+      <span class="pill" id="pill-input">… input</span>
+      <span class="pill" id="ts-pill">—</span>
+    </div>
+  </header>
+
+  <div id="load-error" class="load-error" style="display:none"></div>
+
+  <!-- SIMPLE EXPLANATION -->
+  <section>
+    <div class="section-label">Start here</div>
+    <div class="intro-panel">
+      <h2>What this dashboard shows (in plain language)</h2>
+      <ol class="step-list">
+        <li><span><strong>Big-O</strong> describes how runtime grows when the input size <em>n</em> gets larger — for example, doubling <em>n</em> might multiply time by 4 for an O(n²) algorithm.</span></li>
+        <li><span><strong>Why pin a physical core?</strong> Normally the operating system moves your program between cores. Each move can clear CPU cache and add random jitter. This benchmark <strong>dedicates one physical core</strong> so timings reflect the algorithm, not core hopping.</span></li>
+        <li><span><strong>What we measure</strong> is wall-clock time in milliseconds, repeated several times; we keep the <strong>median</strong> so one noisy run does not skew the curve.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- DEDICATED PHYSICAL CORE -->
+  <section>
+    <div class="section-label">CPU — dedicated physical core</div>
+    <div class="cpu-dedicate" id="cpu-section">
+      <h2>Your machine: physical cores vs. this run</h2>
+      <div class="cpu-dedicate-grid">
+        <div class="cpu-copy" id="cpu-copy">
+          <p>Loading CPU details from <code style="color:var(--accent);font-family:'Space Mono',monospace">benchmark_results.json</code>…</p>
+        </div>
+        <div class="core-grid-wrap">
+          <div class="core-grid-label">Physical cores on this PC</div>
+          <div class="core-grid" id="core-grid"></div>
+          <div class="pinned-logical" id="pinned-logical" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATS ROW -->
+  <div class="stats-row" id="stats-row"></div>
+
+  <!-- SECTION 1: OVERVIEW -->
+  <section>
+    <div class="section-label">01 — Overview</div>
+    <div class="chart-panel">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">All Algorithms — Time vs Input Size</div>
+          <div class="chart-desc">Each line is an algorithm's measured runtime (ms) on the dedicated physical core from your run. Toggle scale to reveal differences between fast and slow algorithms.</div>
+        </div>
+        <div class="chart-toggle-group">
+          <button class="toggle-btn active" onclick="setScale('overview','linear',this)">Linear</button>
+          <button class="toggle-btn"        onclick="setScale('overview','logarithmic',this)">Log</button>
+        </div>
+      </div>
+      <div class="chart-container" style="height:400px">
+        <canvas id="overviewChart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 2: BY COMPLEXITY CLASS -->
+  <section>
+    <div class="section-label">02 — By Complexity Class</div>
+    <div class="two-col">
+      <div class="chart-panel">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">Slow Group  ·  O(n²) &amp; O(n³)</div>
+            <div class="chart-desc">Quadratic growth is dramatic. At n=5000, bubble sort takes ~800ms.</div>
+          </div>
+        </div>
+        <div class="chart-container" style="height:280px"><canvas id="slowChart"></canvas></div>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">Fast Group  ·  O(1) to O(n log n)</div>
+            <div class="chart-desc">The efficient algorithms — nearly invisible on the slow group's scale.</div>
+          </div>
+        </div>
+        <div class="chart-container" style="height:280px"><canvas id="fastChart"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 3: THEORETICAL VS ACTUAL -->
+  <section>
+    <div class="section-label">03 — Actual vs Theoretical Shape</div>
+    <div class="chart-panel">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Normalised Curves — Does Reality Match Theory?</div>
+          <div class="chart-desc">Both curves normalised 0→1. Dashed white = theoretical Big-O shape. Solid = measured. Tight overlap confirms the complexity class is correct.</div>
+        </div>
+        <div class="chart-toggle-group" id="algo-selector"></div>
+      </div>
+      <div class="chart-container" style="height:320px"><canvas id="overlayChart"></canvas></div>
+    </div>
+  </section>
+
+  <!-- SECTION 4: SLOWDOWN HEATMAP -->
+  <section>
+    <div class="section-label">04 — Relative Slowdown at Max N</div>
+    <div class="chart-panel">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">How Much Slower vs Fastest Algorithm?</div>
+          <div class="chart-desc">Bars show log₁₀(slowdown factor) relative to the fastest algorithm at its largest input size. Numbers on right = actual ×factor.</div>
+        </div>
+      </div>
+      <div class="chart-container" style="height:380px"><canvas id="heatChart"></canvas></div>
+    </div>
+  </section>
+
+  <!-- SECTION 5: DATA TABLE -->
+  <section>
+    <div class="section-label">05 — Algorithm Reference Table</div>
+    <div class="chart-panel" style="padding: 0; overflow: hidden;">
+      <table class="algo-table" id="algo-table"></table>
+    </div>
+  </section>
+
+  <footer>
+    <p>AlgoScope · CPU-Pinned Complexity Profiler · Built with Python + Chart.js</p>
+    <p id="footer-pin">CPU details load from benchmark_results.json</p>
+  </footer>
+
+</div>
+
+<script>
+async function loadBenchmark() {
+  const r = await fetch("benchmark_results.json", { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function renderCpuPanel(meta) {
+  const cpu = meta.cpu;
+  const grid = document.getElementById("core-grid");
+  const copy = document.getElementById("cpu-copy");
+  const pinEl = document.getElementById("pinned-logical");
+  grid.innerHTML = "";
+  if (!cpu || cpu.physical_cores == null) {
+    copy.innerHTML = "<p>No CPU block in <code>benchmark_results.json</code> yet. Run <code>python main.py</code> or <code>python benchmarker.py</code> so results include how many <strong>physical cores</strong> exist and <strong>which one was dedicated</strong> for timing.</p>";
+    pinEl.style.display = "none";
+    return;
+  }
+  const nPhys = cpu.physical_cores;
+  const req = cpu.requested_physical_core ?? 0;
+  const ht = cpu.hyperthreading;
+  const log = cpu.pinned_logical_cores || [];
+  const ok = cpu.affinity_success;
+
+  copy.innerHTML = `
+    <p>This PC reports <span class="highlight">${nPhys} physical cores</span> and <span class="highlight">${cpu.logical_cores} logical</span> (hardware threads).${ht ? " Hyperthreading is on: each physical core exposes two logical CPUs." : ""}</p>
+    <p>For this run the benchmark process was <strong>${ok ? "pinned to" : "intended for"}</strong> <span class="highlight">physical core ${req}</span> — work was scheduled on that core so timings are not blurred by bouncing between unrelated cores and their caches.</p>
+    ${!ok && cpu.affinity_error ? `<p style="color:#f0b4b4">Affinity was not applied (${String(cpu.affinity_error)}). Measurements may be noisier.</p>` : ""}
+  `;
+
+  for (let i = 0; i < nPhys; i++) {
+    const div = document.createElement("div");
+    div.className = "core-cell" + (i === req ? " dedicated" : " other");
+    div.innerHTML =
+      `<div class="idx">Physical</div><div class="num">${i}</div>` +
+      (i === req ? `<div class="badge-ded">DEDICATED</div>` : "");
+    grid.appendChild(div);
+  }
+
+  pinEl.style.display = "block";
+  pinEl.innerHTML = ht
+    ? `Physical core <code>${req}</code> corresponds to logical (thread) IDs <code>${log.join(", ")}</code>. The run pins <strong>all</strong> of these so the OS keeps execution on that one physical core.`
+    : `Logical CPUs allowed for this run: <code>${log.join(", ")}</code>.`;
+}
+
+function renderHeaderPills(data) {
+  const meta = data.meta;
+  const cpu = meta.cpu;
+  const corePill = document.getElementById("pill-core");
+  if (cpu && cpu.requested_physical_core != null) {
+    corePill.textContent = "Physical core " + cpu.requested_physical_core + " dedicated";
+    corePill.classList.toggle("active", !!cpu.affinity_success);
+  } else {
+    corePill.textContent = "CPU affinity";
+    corePill.classList.remove("active");
+  }
+  document.getElementById("pill-trials").textContent = meta.trials + " trials";
+  document.getElementById("pill-algos").textContent = Object.keys(data.algorithms).length + " algorithms";
+  document.getElementById("pill-input").textContent = meta.input_kind + " input";
+  document.getElementById("ts-pill").textContent = meta.timestamp;
+
+  const fp = document.getElementById("footer-pin");
+  if (cpu && cpu.requested_physical_core != null) {
+    fp.textContent =
+      "Pinned to physical core " +
+      cpu.requested_physical_core +
+      " · " +
+      meta.trials +
+      " trials · median timing · " +
+      meta.input_kind +
+      " input";
+  } else {
+    fp.textContent = meta.trials + " trials · median timing · " + meta.input_kind + " input";
+  }
+}
+
+function theoreticalCurve(complexity, sizes) {
+  const n = sizes.map((x) => Math.max(x, 1));
+  let raw;
+  switch (complexity) {
+    case "O(1)":
+      raw = n.map(() => 1);
+      break;
+    case "O(log n)":
+      raw = n.map((x) => Math.log2(x));
+      break;
+    case "O(n)":
+      raw = n.map((x) => x);
+      break;
+    case "O(n log n)":
+      raw = n.map((x) => x * Math.log2(x));
+      break;
+    case "O(n²)":
+      raw = n.map((x) => x ** 2);
+      break;
+    case "O(n³)":
+      raw = n.map((x) => x ** 3);
+      break;
+    default:
+      raw = n.map((x) => x);
+  }
+  const mn = Math.min(...raw),
+    mx = Math.max(...raw);
+  const rng = mx - mn || 1;
+  return raw.map((v) => (v - mn) / rng);
+}
+
+function normalise(arr) {
+  const mn = Math.min(...arr),
+    mx = Math.max(...arr),
+    rng = mx - mn || 1;
+  return arr.map((v) => (v - mn) / rng);
+}
+
+const CHART_DEFAULTS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: "index", intersect: false },
+  plugins: {
+    legend: { labels: { color: "#8b949e", font: { family: "Space Mono", size: 11 }, boxWidth: 14, padding: 16 } },
+    tooltip: {
+      backgroundColor: "#0e1419",
+      borderColor: "#1e2a36",
+      borderWidth: 1,
+      titleColor: "#cdd6e0",
+      bodyColor: "#8b949e",
+      titleFont: { family: "Syne", weight: "700" },
+      bodyFont: { family: "Space Mono", size: 11 },
+      callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(4)} ms` },
+    },
+  },
+  scales: {
+    x: {
+      ticks: { color: "#5a7080", font: { family: "Space Mono", size: 10 } },
+      grid: { color: "#1a2230" },
+      title: { display: true, text: "Input Size (n)", color: "#5a7080", font: { family: "Syne", size: 11 } },
+    },
+    y: {
+      ticks: { color: "#5a7080", font: { family: "Space Mono", size: 10 } },
+      grid: { color: "#1a2230" },
+      title: { display: true, text: "Time (ms)", color: "#5a7080", font: { family: "Syne", size: 11 } },
+    },
+  },
+};
+
+function renderDashboard(data) {
+  const algos = data.algorithms;
+  const names = Object.keys(algos);
+  if (names.length === 0) return;
+
+  const allMaxTimes = names.map((n) => algos[n].times_ms.at(-1));
+  const fastest = names[allMaxTimes.indexOf(Math.min(...allMaxTimes))];
+  const slowest = names[allMaxTimes.indexOf(Math.max(...allMaxTimes))];
+  const slowdown = (Math.max(...allMaxTimes) / Math.min(...allMaxTimes)).toFixed(0);
+
+  const cpuCoreLabel =
+    data.meta.cpu && data.meta.cpu.requested_physical_core != null
+      ? "physical core " + data.meta.cpu.requested_physical_core
+      : "pinned core";
+
+  const statsEl = document.getElementById("stats-row");
+  statsEl.innerHTML = "";
+  [
+    { label: "Algorithms", value: names.length, sub: "benchmarked" },
+    { label: "Dedicated", value: cpuCoreLabel, sub: "for this run" },
+    { label: "Trials / Run", value: data.meta.trials, sub: "median kept" },
+    { label: "Fastest (max n)", value: fastest.split(" ")[0], sub: algos[fastest].complexity },
+    { label: "Slowest (max n)", value: slowest.split(" ")[0], sub: algos[slowest].complexity },
+    { label: "Max Slowdown", value: slowdown + "×", sub: "vs fastest at max n" },
+  ].forEach((s) => {
+    statsEl.innerHTML += `<div class="stat-card"><div class="stat-label">${s.label}</div><div class="stat-value">${s.value}</div><div class="stat-sub">${s.sub}</div></div>`;
+  });
+
+  const refName = names.includes("Bubble Sort") ? "Bubble Sort" : names[0];
+
+  const overviewChart = new Chart(document.getElementById("overviewChart"), {
+    type: "line",
+    data: {
+      labels: algos[refName].sizes,
+      datasets: names.map((name) => ({
+        label: `${name} [${algos[name].complexity}]`,
+        data: algos[name].sizes.map((s, i) => ({ x: s, y: algos[name].times_ms[i] })),
+        borderColor: algos[name].color,
+        backgroundColor: algos[name].color + "22",
+        borderWidth: 2,
+        pointRadius: 3,
+        pointHoverRadius: 6,
+        tension: 0.3,
+        parsing: false,
+      })),
+    },
+    options: {
+      ...JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+      scales: {
+        x: { type: "linear", ...CHART_DEFAULTS.scales.x },
+        y: { type: "linear", ...CHART_DEFAULTS.scales.y },
+      },
+    },
+  });
+
+  window.scaleCharts = { overview: overviewChart };
+  window.setScale = function (id, scale, btn) {
+    btn.closest(".chart-toggle-group").querySelectorAll(".toggle-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    window.scaleCharts[id].options.scales.y.type = scale;
+    window.scaleCharts[id].update();
+  };
+
+  const slowNames = names.filter((n) => ["O(n²)", "O(n³)"].includes(algos[n].complexity));
+  new Chart(document.getElementById("slowChart"), {
+    type: "line",
+    data: {
+      datasets: slowNames.map((name) => ({
+        label: `${name} [${algos[name].complexity}]`,
+        data: algos[name].sizes.map((s, i) => ({ x: s, y: algos[name].times_ms[i] })),
+        borderColor: algos[name].color,
+        backgroundColor: algos[name].color + "18",
+        borderWidth: 2.5,
+        pointRadius: 4,
+        tension: 0.3,
+        parsing: false,
+      })),
+    },
+    options: {
+      ...JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+      scales: { x: { type: "linear", ...CHART_DEFAULTS.scales.x }, y: { ...CHART_DEFAULTS.scales.y } },
+    },
+  });
+
+  const fastNames = names.filter((n) => !["O(n²)", "O(n³)"].includes(algos[n].complexity));
+  new Chart(document.getElementById("fastChart"), {
+    type: "line",
+    data: {
+      datasets: fastNames.map((name) => ({
+        label: `${name} [${algos[name].complexity}]`,
+        data: algos[name].sizes.map((s, i) => ({ x: s, y: algos[name].times_ms[i] })),
+        borderColor: algos[name].color,
+        backgroundColor: algos[name].color + "18",
+        borderWidth: 2.5,
+        pointRadius: 4,
+        tension: 0.3,
+        parsing: false,
+      })),
+    },
+    options: {
+      ...JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+      scales: { x: { type: "linear", ...CHART_DEFAULTS.scales.x }, y: { ...CHART_DEFAULTS.scales.y } },
+    },
+  });
+
+  let activeAlgo = names.length > 1 ? names[1] : names[0];
+
+  function buildOverlayDatasets(name) {
+    const meta = algos[name];
+    const norm = normalise(meta.times_ms);
+    const theory = theoreticalCurve(meta.complexity, meta.sizes);
+    return [
+      {
+        label: "Actual (normalised)",
+        data: meta.sizes.map((s, i) => ({ x: s, y: norm[i] })),
+        borderColor: meta.color,
+        backgroundColor: meta.color + "30",
+        borderWidth: 2.5,
+        pointRadius: 5,
+        tension: 0.3,
+        parsing: false,
+      },
+      {
+        label: `Theory ${meta.complexity}`,
+        data: meta.sizes.map((s, i) => ({ x: s, y: theory[i] })),
+        borderColor: "#ffffff",
+        backgroundColor: "transparent",
+        borderWidth: 1.5,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        tension: 0.3,
+        parsing: false,
+      },
+    ];
+  }
+
+  const overlayChart = new Chart(document.getElementById("overlayChart"), {
+    type: "line",
+    data: { datasets: buildOverlayDatasets(activeAlgo) },
+    options: {
+      ...JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+      scales: {
+        x: { type: "linear", ...CHART_DEFAULTS.scales.x },
+        y: {
+          ...CHART_DEFAULTS.scales.y,
+          title: { display: true, text: "Normalised (0–1)", color: "#5a7080", font: { family: "Syne", size: 11 } },
+        },
+      },
+      plugins: {
+        ...CHART_DEFAULTS.plugins,
+        tooltip: {
+          ...CHART_DEFAULTS.plugins.tooltip,
+          callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)}` },
+        },
+      },
+    },
+  });
+
+  const sel = document.getElementById("algo-selector");
+  sel.innerHTML = "";
+  names.forEach((name) => {
+    const btn = document.createElement("button");
+    btn.className = "toggle-btn" + (name === activeAlgo ? " active" : "");
+    btn.textContent = name.split(" ")[0];
+    btn.title = `${name} · ${algos[name].complexity}`;
+    btn.onclick = () => {
+      sel.querySelectorAll(".toggle-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      overlayChart.data.datasets = buildOverlayDatasets(name);
+      overlayChart.update();
+    };
+    sel.appendChild(btn);
+  });
+
+  const maxTimes = names.map((n) => algos[n].times_ms.at(-1));
+  const minTime = Math.min(...maxTimes);
+  const slowdowns = maxTimes.map((t) => t / minTime);
+  const logSlows = slowdowns.map((s) => Math.max(Math.log10(s), 0.01));
+  const sortedIdx = [...Array(names.length).keys()].sort((a, b) => logSlows[a] - logSlows[b]);
+
+  new Chart(document.getElementById("heatChart"), {
+    type: "bar",
+    data: {
+      labels: sortedIdx.map((i) => names[i]),
+      datasets: [
+        {
+          data: sortedIdx.map((i) => logSlows[i]),
+          backgroundColor: sortedIdx.map((i) => algos[names[i]].color + "cc"),
+          borderColor: sortedIdx.map((i) => algos[names[i]].color),
+          borderWidth: 1.5,
+          borderRadius: 4,
+        },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#0e1419",
+          borderColor: "#1e2a36",
+          borderWidth: 1,
+          titleColor: "#cdd6e0",
+          bodyColor: "#8b949e",
+          titleFont: { family: "Syne", weight: "700" },
+          bodyFont: { family: "Space Mono", size: 11 },
+          callbacks: {
+            title: (items) => names[sortedIdx[items[0].dataIndex]],
+            label: (ctx) => ` ×${slowdowns[sortedIdx[ctx.dataIndex]].toFixed(1)} slower than ${fastest}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: {
+            color: "#5a7080",
+            font: { family: "Space Mono", size: 10 },
+            callback: (v) => `10^${v.toFixed(1)}`,
+          },
+          grid: { color: "#1a2230" },
+          title: { display: true, text: "log₁₀(Slowdown)", color: "#5a7080", font: { family: "Syne", size: 11 } },
+        },
+        y: { ticks: { color: "#cdd6e0", font: { family: "Space Mono", size: 11 } }, grid: { color: "#1a2230" } },
+      },
+    },
+  });
+
+  const tbl = document.getElementById("algo-table");
+  const maxT = Math.max(...allMaxTimes);
+  tbl.innerHTML = `<thead><tr>
+  <th>Algorithm</th><th>Complexity</th><th>Category</th>
+  <th>First n</th><th>Mid n</th><th>Max n</th><th>Relative Speed</th>
+</tr></thead>`;
+  const tbody = document.createElement("tbody");
+  const sorted = [...names].sort((a, b) => algos[a].times_ms.at(-1) - algos[b].times_ms.at(-1));
+  sorted.forEach((name) => {
+    const m = algos[name];
+    const midIdx = Math.floor(m.times_ms.length / 2);
+    const t0 = m.times_ms[0],
+      tMid = m.times_ms[midIdx],
+      tN = m.times_ms.at(-1);
+    const rel = tN / maxT;
+    const clsBadge = { "O(1)": "#06d6a0", "O(log n)": "#118ab2", "O(n)": "#ffd166", "O(n log n)": "#9b5de5", "O(n²)": "#ef476f", "O(n³)": "#ff4d4d" };
+    const col = clsBadge[m.complexity] || "#aaa";
+    tbody.innerHTML += `<tr>
+    <td><span class="color-dot" style="background:${m.color}"></span>${name}</td>
+    <td><span class="badge" style="background:${col}22;color:${col};border:1px solid ${col}44">${m.complexity}</span></td>
+    <td style="color:var(--muted)">${m.category}</td>
+    <td style="font-family:'Space Mono',monospace;font-size:0.7rem">${t0.toFixed(4)} ms</td>
+    <td style="font-family:'Space Mono',monospace;font-size:0.7rem">${tMid.toFixed(3)} ms</td>
+    <td style="font-family:'Space Mono',monospace;font-size:0.7rem">${tN.toFixed(3)} ms</td>
+    <td><span class="bar-wrap"><span class="bar-fill" style="width:${Math.max(rel * 100, 1)}%;background:${m.color}"></span></span></td>
+  </tr>`;
+  });
+  tbl.appendChild(tbody);
+}
+
+async function main() {
+  let data;
+  try {
+    data = await loadBenchmark();
+  } catch (err) {
+    const el = document.getElementById("load-error");
+    el.style.display = "block";
+    el.innerHTML =
+      `<strong>Could not load benchmark_results.json.</strong> Browsers block <code>file://</code> requests. In this folder run:<br><code>python -m http.server 8000</code> then open <code>http://localhost:8000/dashboard.html</code><br><small style="opacity:0.85">(${String(err.message)})</small>`;
+    return;
+  }
+  renderCpuPanel(data.meta);
+  renderHeaderPills(data);
+  renderDashboard(data);
+}
+
+main();
+</script>
+</body>
+</html>
