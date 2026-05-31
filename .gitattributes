@@ -1,0 +1,4 @@
+*.html linguist-documentation
+dashboard.html linguist-generated
+plots/ linguist-generated
+*.png binary
